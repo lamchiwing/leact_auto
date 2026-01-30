@@ -1,0 +1,7 @@
+{
+  "name": "KACH & Partner Automation",
+  "description": "Dynamic landing page for KACH & Partner automation solutions featuring interactive AI consultancy.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}
