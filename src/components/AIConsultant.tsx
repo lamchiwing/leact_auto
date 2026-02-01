@@ -1,6 +1,5 @@
-
 import React, { useState, useRef, useEffect } from 'react';
-import { getConsultationResponse } from '../services/geminiService';
+import { getConsultationResponse } from "../services/geminiService";
 import { ChatMessage } from '../types';
 
 const AIConsultant: React.FC = () => {
