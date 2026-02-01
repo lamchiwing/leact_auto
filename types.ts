@@ -1,14 +1,21 @@
+// src/types.ts
+
+export type ToolKey =
+  | "lead_intake"
+  | "ai_consultant"
+  | "checkout";
 
 export interface Tool {
-  id: string;
+  key: ToolKey;
   title: string;
   description: string;
-  icon: string;
-  details: string[];
-  price: number;
+  priceMonthly: number;
 }
 
-export interface ChatMessage {
-  role: 'user' | 'model';
-  content: string;
+export interface LeadPayload {
+  tenantId: string;
+  name: string;
+  email: string;
+  phone?: string;
+  tool: ToolKey;
 }
