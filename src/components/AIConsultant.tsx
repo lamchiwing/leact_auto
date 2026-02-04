@@ -1,98 +1,105 @@
-import React, { useState, useRef, useEffect } from 'react';
-import { getConsultationResponse } from "../services/geminiService";
-import { ChatMessage } from '../types';
+import React, { useState } from "react";
+import { consultAI } from "../services/geminiService";
 
-const AIConsultant: React.FC = () => {
-  const [messages, setMessages] = useState<ChatMessage[]>([
-    { role: 'model', content: '你好！我係 KACH & Partner 嘅自動化專員。你想解決邊方面嘅業務痛點？係查詢太多、行政太亂，定係數據唔清楚？' }
-  ]);
-  const [input, setInput] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const chatEndRef = useRef<HTMLDivElement>(null);
+const WHATSAPP_LINK =
+  "https://wa.me/852XXXXXXXX?text=" + encodeURIComponent("你好，我想了解 LEACT 自動化方案");
 
-  const scrollToBottom = () => {
-    chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  };
+type Msg = { role: "user" | "assistant"; content: string };
 
-  useEffect(scrollToBottom, [messages]);
+export default function AIConsultant() {
+  const [messages, setMessages] = useState<Msg[]>([]);
+  const [input, setInput] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  const handleSend = async () => {
-    if (!input.trim() || isLoading) return;
+  const push = (m: Msg) => setMessages((prev) => [...prev, m]);
 
-    const userMsg: ChatMessage = { role: 'user', content: input };
-    setMessages(prev => [...prev, userMsg]);
-    setInput('');
-    setIsLoading(true);
+  const send = async () => {
+    const text = input.trim();
+    if (!text || busy) return;
 
-    try {
-      const response = await getConsultationResponse(input, messages);
-      setMessages(prev => [...prev, { role: 'model', content: response || '抱歉，暫時無法連接專家。' }]);
-    } catch (error) {
-      setMessages(prev => [...prev, { role: 'model', content: '哎呀，系統繁忙中。不如你直接 WhatsApp 我哋？' }]);
-    } finally {
-      setIsLoading(false);
+    setBusy(true);
+    setInput("");
+    push({ role: "user", content: text });
+
+    // 你可以加 system prompt（品牌顧問語氣）
+    const prompt =
+      `你是 LEACT 自動化顧問。回答要精簡（<=100字），先問1個關鍵問題或直接推薦1個方案。\n\n用戶：${text}\n顧問：`;
+
+    const result = await consultAI(prompt);
+
+    // ✅ 1) 正常：直接顯示 AI 回覆
+    if (result.ok) {
+      push({ role: "assistant", content: result.reply });
+      setBusy(false);
+      return;
     }
+
+    // 🟡 2) Soft fallback：AI 回覆怪/空/502（仍可繼續對話）
+    if (result.level === "soft") {
+      push({
+        role: "assistant",
+        content:
+          `我未完全理解你嘅意思 🙏\n` +
+          `你可唔可以補充：你想自動化「入線/客服/內部流程/報表」邊一部分？\n\n` +
+          `（或者你都可以直接 WhatsApp 我哋，會快好多）`,
+      });
+      setBusy(false);
+      return;
+    }
+
+    // 🔴 3) Hard fallback：network/timeout/worker 掛
+    push({
+      role: "assistant",
+      content: `哎呀，系統繁忙中 😅 不如你直接 WhatsApp 我哋？`,
+    });
+    setBusy(false);
   };
 
   return (
-    <section id="consultant" className="py-24 px-6 md:px-12 bg-black text-white">
-      <div className="max-w-4xl mx-auto">
-        <div className="flex flex-col md:flex-row gap-12 items-center">
-          <div className="md:w-1/3">
-            <h2 className="text-4xl font-black text-[#e0b81f] mb-6">AI 自動化顧問</h2>
-            <p className="text-lg opacity-80 leading-relaxed mb-6">
-              唔確定邊套系統最幫到你？<br/>
-              直接話比我哋聽你每日最煩嘅事，我哋會為你揀選最合適嘅自動化工具。
-            </p>
-            <div className="flex items-center gap-4">
-              <div className="flex -space-x-4">
-                {[1,2,3].map(i => (
-                  <img key={i} src={`https://picsum.photos/seed/${i+10}/100`} className="w-10 h-10 rounded-full border-2 border-black" />
-                ))}
-              </div>
-              <span className="text-sm font-bold opacity-60">50+ 企業已使用</span>
+    <div>
+      {/* messages render (你原本點 render 就沿用) */}
+      <div className="space-y-3">
+        {messages.map((m, i) => (
+          <div key={i} className={m.role === "user" ? "text-right" : "text-left"}>
+            <div className="inline-block max-w-[85%] rounded-2xl px-4 py-3 bg-white/20">
+              {m.content}
             </div>
           </div>
-          
-          <div className="md:w-2/3 w-full glass-card bg-white/5 rounded-3xl p-6 border border-white/10 shadow-2xl flex flex-col h-[500px]">
-            <div className="flex-grow overflow-y-auto mb-4 space-y-4 pr-2">
-              {messages.map((msg, idx) => (
-                <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                  <div className={`max-w-[80%] p-4 rounded-2xl font-bold text-sm ${msg.role === 'user' ? 'bg-[#ff5ec4] text-black rounded-tr-none' : 'bg-white/10 text-white rounded-tl-none'}`}>
-                    {msg.content}
-                  </div>
-                </div>
-              ))}
-              {isLoading && (
-                <div className="flex justify-start">
-                  <div className="bg-white/10 p-4 rounded-2xl text-xs animate-pulse">正在思考解決方案...</div>
-                </div>
-              )}
-              <div ref={chatEndRef} />
-            </div>
-            
-            <div className="flex gap-2">
-              <input
-                type="text"
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyPress={(e) => e.key === 'Enter' && handleSend()}
-                placeholder="話比我聽你嘅困難..."
-                className="flex-grow bg-white/10 border border-white/20 rounded-xl px-4 py-3 outline-none focus:border-[#e0b81f] transition-all"
-              />
-              <button
-                onClick={handleSend}
-                disabled={isLoading}
-                className="bg-[#e0b81f] text-black px-6 py-3 rounded-xl font-black hover:scale-105 active:scale-95 transition-all"
-              >
-                Send
-              </button>
-            </div>
-          </div>
-        </div>
+        ))}
       </div>
-    </section>
-  );
-};
 
-export default AIConsultant;
+      {/* input + send */}
+      <div className="mt-4 flex gap-2">
+        <input
+          value={input}
+          onChange={(e) => setInput(e.target.value)}
+          className="flex-1 rounded-xl px-3 py-2"
+          placeholder={busy ? "處理中..." : "輸入訊息…"}
+          disabled={busy}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") send();
+          }}
+        />
+        <button
+          onClick={send}
+          disabled={busy}
+          className="rounded-xl px-4 py-2 bg-black text-white font-bold"
+        >
+          Send
+        </button>
+      </div>
+
+      {/* ✅ WhatsApp CTA（只係提示位；soft/hard 時都有引導） */}
+      <div className="mt-3">
+        <a
+          href={WHATSAPP_LINK}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center gap-2 font-bold underline"
+        >
+          即刻 WhatsApp 我哋
+        </a>
+      </div>
+    </div>
+  );
+}
