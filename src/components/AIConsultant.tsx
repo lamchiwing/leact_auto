@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { consultAI } from "../services/geminiService";
 
 const WHATSAPP_LINK =
-  "https://wa.me/852XXXXXXXX?text=" + encodeURIComponent("你好，我想了解 LEACT 自動化方案");
+  "https://wa.me/85290858188?text=" + encodeURIComponent("你好，我想了解 LEACT 自動化方案");
 
 type Msg = { role: "user" | "assistant"; content: string };
 
