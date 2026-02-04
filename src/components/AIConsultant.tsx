@@ -13,47 +13,58 @@ export default function AIConsultant() {
 
   const push = (m: Msg) => setMessages((prev) => [...prev, m]);
 
-  const send = async () => {
-    const text = input.trim();
-    if (!text || busy) return;
+const send = async () => {
+  const text = input.trim();
+  if (!text || busy) return;
 
-    setBusy(true);
-    setInput("");
-    push({ role: "user", content: text });
+  setBusy(true);
+  setInput("");
+  push({ role: "user", content: text });
 
-    // 你可以加 system prompt（品牌顧問語氣）
-    const prompt =
-      `你是 LEACT 自動化顧問。回答要精簡（<=100字），先問1個關鍵問題或直接推薦1個方案。\n\n用戶：${text}\n顧問：`;
+  // ✅ 顯示「處理中…」bubble（專業 UX）
+  push({ role: "assistant", content: "處理中…" });
 
-    const result = await consultAI(prompt);
+  const prompt =
+    `你是 LEACT 自動化顧問。回答要精簡（<=100字），先問1個關鍵問題或直接推薦1個方案。\n\n用戶：${text}\n顧問：`;
 
-    // ✅ 1) 正常：直接顯示 AI 回覆
-    if (result.ok) {
-      push({ role: "assistant", content: result.reply });
-      setBusy(false);
-      return;
-    }
+  let result: any;
+  try {
+    result = await consultAI(prompt);
+  } catch (e) {
+    result = { ok: false, level: "hard", message: "Unexpected error", details: String(e) };
+  }
 
-    // 🟡 2) Soft fallback：AI 回覆怪/空/502（仍可繼續對話）
-    if (result.level === "soft") {
-      push({
-        role: "assistant",
-        content:
-          `我未完全理解你嘅意思 🙏\n` +
-          `你可唔可以補充：你想自動化「入線/客服/內部流程/報表」邊一部分？\n\n` +
-          `（或者你都可以直接 WhatsApp 我哋，會快好多）`,
-      });
-      setBusy(false);
-      return;
-    }
+  // ✅ 移除最後一條「處理中…」
+  setMessages((prev) => prev.slice(0, -1));
 
-    // 🔴 3) Hard fallback：network/timeout/worker 掛
+  // 1) 正常
+  if (result?.ok) {
+    push({ role: "assistant", content: String(result.reply || "").trim() });
+    setBusy(false);
+    return;
+  }
+
+  // 2) Soft fallback（AI 有回但怪 / 502 / 空 reply）
+  if (result?.level === "soft") {
     push({
       role: "assistant",
-      content: `哎呀，系統繁忙中 😅 不如你直接 WhatsApp 我哋？`,
+      content:
+        `我未完全理解你嘅意思 🙏\n` +
+        `你可唔可以補充：你想自動化「入線 / 客服 / 內部流程 / 報表」邊一部分？\n\n` +
+        `（或者你都可以直接 WhatsApp 我哋，會快好多）`,
     });
     setBusy(false);
-  };
+    return;
+  }
+
+  // 3) Hard fallback（network / timeout / worker 掛）
+  push({
+    role: "assistant",
+    content: `哎呀，系統繁忙中 😅 不如你直接 WhatsApp 我哋？`,
+  });
+  setBusy(false);
+};
+
 
   return (
     <div>
