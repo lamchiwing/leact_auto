@@ -11,7 +11,7 @@ export async function consultAI(prompt: string): Promise<ConsultResult> {
   }
 
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 12000); // 12s timeout
+  const timeout = setTimeout(() => controller.abort(), 12000);
 
   try {
     const res = await fetch(`${WORKER_BASE}/api/consult`, {
@@ -23,30 +23,33 @@ export async function consultAI(prompt: string): Promise<ConsultResult> {
 
     const data = await res.json().catch(() => ({}));
 
-    // ✅ 正常
+    // ✅ 1️⃣ 只要有任何可用 reply，就當成功（最重要）
     const reply = String(data?.reply || "").trim();
-    if (res.ok && reply.length > 0) {
+    if (reply.length > 0) {
       return { ok: true, reply };
     }
 
-    // 🟡 Soft：Worker 有回應，但 Gemini/格式/內容有問題
-    // （例如 502 Gemini error、Empty reply、或者 reply 為空）
-    if (res.status >= 400 && res.status < 600) {
-      const msg =
-        String(data?.error || "").trim() ||
-        "多謝查詢，我未完全理解你嘅問題，可以換個方法講一次嗎？";
-      return { ok: false, level: "soft", message: msg, details: data };
+    // 🟡 2️⃣ Worker 有回，但真係冇內容（AI 回唔到）
+    if (res.ok) {
+      return {
+        ok: false,
+        level: "soft",
+        message: "我未完全理解你嘅問題，可以再講清楚少少嗎？",
+        details: data,
+      };
     }
 
-    // 🟡 其他不明但仍屬 soft
+    // 🟡 3️⃣ Worker / Gemini error（但非 network）
     return {
       ok: false,
       level: "soft",
-      message: "我未完全理解你嘅問題，可以再講清楚少少嗎？",
+      message:
+        String(data?.error || "").trim() ||
+        "系統暫時未能處理你嘅問題，可以再試一次嗎？",
       details: data,
     };
   } catch (err: any) {
-    // 🔴 Hard：Network/timeout/被 abort
+    // 🔴 4️⃣ 真・network / timeout
     const isAbort = err?.name === "AbortError";
     return {
       ok: false,
