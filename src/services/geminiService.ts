@@ -1,34 +1,60 @@
-const SYSTEM_INSTRUCTION = `
-你是 KACH & Partner 的自動化專家顧問。你的目標是根據用戶的業務痛點，推薦我們 5 套自動化工具中的其中一套：
-1. Lead Intake & Routing
-2. Internal Ops Automation
-3. Customer Support Automation
-4. Reporting & Monitoring Automation
-5. Compliance / Process Guardrails
-請用生動、專業且具備親和力的方式對話。保持回答精簡，每次不超過 100 字。
-`;
+export type ConsultResult =
+  | { ok: true; reply: string }
+  | { ok: false; level: "soft"; message: string; details?: any }
+  | { ok: false; level: "hard"; message: string; details?: any };
 
-// ✅ 建議用 Vite env：VITE_WORKER_URL
 const WORKER_BASE = (import.meta as any).env?.VITE_WORKER_URL || "";
 
-export async function getConsultationResponse(
-  userMessage: string,
-  history: { role: "user" | "model"; content: string }[]
-) {
-  if (!WORKER_BASE) throw new Error("Missing VITE_WORKER_URL");
+export async function consultAI(prompt: string): Promise<ConsultResult> {
+  if (!WORKER_BASE) {
+    return { ok: false, level: "hard", message: "Missing VITE_WORKER_URL" };
+  }
 
-  // 簡單把最近幾句對話帶埋（可選）
-  const lastTurns = history.slice(-6).map(m => `${m.role === "user" ? "用戶" : "顧問"}：${m.content}`).join("\n");
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12000); // 12s timeout
 
-  const prompt = `${SYSTEM_INSTRUCTION}\n\n${lastTurns}\n用戶：${userMessage}\n顧問：`;
+  try {
+    const res = await fetch(`${WORKER_BASE}/api/consult`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt }),
+      signal: controller.signal,
+    });
 
-  const res = await fetch(`${WORKER_BASE}/api/consult`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt }),
-  });
+    const data = await res.json().catch(() => ({}));
 
-  const data = await res.json();
-  if (!res.ok) throw new Error(data?.error || "Worker error");
-  return data.reply as string;
+    // ✅ 正常
+    const reply = String(data?.reply || "").trim();
+    if (res.ok && reply.length > 0) {
+      return { ok: true, reply };
+    }
+
+    // 🟡 Soft：Worker 有回應，但 Gemini/格式/內容有問題
+    // （例如 502 Gemini error、Empty reply、或者 reply 為空）
+    if (res.status >= 400 && res.status < 600) {
+      const msg =
+        String(data?.error || "").trim() ||
+        "多謝查詢，我未完全理解你嘅問題，可以換個方法講一次嗎？";
+      return { ok: false, level: "soft", message: msg, details: data };
+    }
+
+    // 🟡 其他不明但仍屬 soft
+    return {
+      ok: false,
+      level: "soft",
+      message: "我未完全理解你嘅問題，可以再講清楚少少嗎？",
+      details: data,
+    };
+  } catch (err: any) {
+    // 🔴 Hard：Network/timeout/被 abort
+    const isAbort = err?.name === "AbortError";
+    return {
+      ok: false,
+      level: "hard",
+      message: isAbort ? "請求超時" : "Network error",
+      details: String(err?.message || err),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
 }
