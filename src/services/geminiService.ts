@@ -3,33 +3,69 @@ export type ConsultResult =
   | { ok: false; level: "soft"; message: string; details?: any }
   | { ok: false; level: "hard"; message: string; details?: any };
 
-const WORKER_BASE = (import.meta as any).env?.VITE_WORKER_URL || "";
+// ✅ Default to your Worker URL, but allow override via VITE_WORKER_URL
+const DEFAULT_WORKER_BASE = "https://dry-violet-a862.alisonlam0703.workers.dev";
+const WORKER_BASE =
+  (import.meta as any).env?.VITE_WORKER_URL?.trim() || DEFAULT_WORKER_BASE;
+
+// ✅ Tenant auth headers required by your Worker
+const TENANT_ID = (import.meta as any).env?.VITE_TENANT_ID?.trim() || "";
+const TENANT_KEY = (import.meta as any).env?.VITE_TENANT_KEY?.trim() || "";
+
+function normalizeBase(base: string) {
+  return base.replace(/\/+$/, "");
+}
 
 export async function consultAI(prompt: string): Promise<ConsultResult> {
-  if (!WORKER_BASE) {
-    return { ok: false, level: "hard", message: "Missing VITE_WORKER_URL" };
+  const base = normalizeBase(WORKER_BASE);
+
+  if (!base) {
+    return { ok: false, level: "hard", message: "Missing worker base URL" };
+  }
+
+  if (!TENANT_ID || !TENANT_KEY) {
+    return {
+      ok: false,
+      level: "hard",
+      message: `Missing tenant credentials: ${
+        !TENANT_ID && !TENANT_KEY
+          ? "VITE_TENANT_ID + VITE_TENANT_KEY"
+          : !TENANT_ID
+          ? "VITE_TENANT_ID"
+          : "VITE_TENANT_KEY"
+      }`,
+    };
+  }
+
+  const cleanPrompt = String(prompt || "").trim();
+  if (!cleanPrompt) {
+    return { ok: false, level: "soft", message: "請輸入內容先再提交" };
   }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12000);
 
   try {
-    const res = await fetch(`${WORKER_BASE}/api/consult`, {
+    const res = await fetch(`${base}/api/consult`, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt }),
+      headers: {
+        "Content-Type": "application/json",
+        "X-Tenant-Id": TENANT_ID,
+        "X-Tenant-Key": TENANT_KEY,
+      },
+      body: JSON.stringify({ prompt: cleanPrompt }),
       signal: controller.signal,
     });
 
-    const data = await res.json().catch(() => ({}));
+    const data: any = await res.json().catch(() => ({}));
 
-    // ✅ 1️⃣ 只要有任何可用 reply，就當成功（最重要）
+    // ✅ 1) Any usable reply => success
     const reply = String(data?.reply || "").trim();
     if (reply.length > 0) {
       return { ok: true, reply };
     }
 
-    // 🟡 2️⃣ Worker 有回，但真係冇內容（AI 回唔到）
+    // ✅ 2) Worker returned OK but no reply => soft fallback
     if (res.ok) {
       return {
         ok: false,
@@ -39,17 +75,45 @@ export async function consultAI(prompt: string): Promise<ConsultResult> {
       };
     }
 
-    // 🟡 3️⃣ Worker / Gemini error（但非 network）
+    // ✅ 3) Non-OK status from Worker => map common cases
+    if (res.status === 401) {
+      return {
+        ok: false,
+        level: "hard",
+        message: "Tenant 驗證失敗（請檢查 Tenant ID / Key）",
+        details: data,
+      };
+    }
+
+    if (res.status === 429) {
+      return {
+        ok: false,
+        level: "soft",
+        message: "而家太多人用緊，請稍後再試一次。",
+        details: data,
+      };
+    }
+
+    if (res.status === 402) {
+      return {
+        ok: false,
+        level: "hard",
+        message: "本月用量已達上限（quota exceeded）。",
+        details: data,
+      };
+    }
+
+    // Generic error
     return {
       ok: false,
       level: "soft",
       message:
         String(data?.error || "").trim() ||
-        "系統暫時未能處理你嘅問題，可以再試一次嗎？",
+        `系統暫時未能處理你嘅問題（HTTP ${res.status}），可以再試一次嗎？`,
       details: data,
     };
   } catch (err: any) {
-    // 🔴 4️⃣ 真・network / timeout
+    // ✅ 4) Real network / timeout
     const isAbort = err?.name === "AbortError";
     return {
       ok: false,
