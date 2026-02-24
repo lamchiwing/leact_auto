@@ -11,8 +11,16 @@ const WORKER_BASE_RAW: string = env.VITE_WORKER_URL || "";
 const TENANT_ID: string = env.VITE_TENANT_ID || "";
 const TENANT_KEY: string = env.VITE_TENANT_KEY || "";
 
+// Optional debug flag (set VITE_DEBUG=1 in Pages variables if needed)
+const DEBUG: boolean = String(env.VITE_DEBUG || "") === "1";
+
 // normalize: remove trailing slash
-const WORKER_BASE = WORKER_BASE_RAW.replace(/\/+$/, "");
+let WORKER_BASE = WORKER_BASE_RAW.replace(/\/+$/, "").trim();
+
+// ensure scheme
+if (WORKER_BASE && !/^https?:\/\//i.test(WORKER_BASE)) {
+  WORKER_BASE = `https://${WORKER_BASE}`;
+}
 
 function missingVars() {
   const missing: string[] = [];
@@ -25,6 +33,13 @@ function missingVars() {
 export async function consultAI(prompt: string): Promise<ConsultResult> {
   const missing = missingVars();
   if (missing.length) {
+    if (DEBUG) {
+      console.log("[consultAI] missing vars:", missing, {
+        hasWorkerUrl: !!WORKER_BASE,
+        hasTenantId: !!TENANT_ID,
+        hasTenantKey: !!TENANT_KEY,
+      });
+    }
     return {
       ok: false,
       level: "hard",
@@ -37,12 +52,22 @@ export async function consultAI(prompt: string): Promise<ConsultResult> {
     };
   }
 
+  if (DEBUG) {
+    console.log("[consultAI] request ->", {
+      url: `${WORKER_BASE}/api/consult`,
+      hasTenantId: !!TENANT_ID,
+      hasTenantKey: !!TENANT_KEY, // do NOT print key
+      promptLen: String(prompt || "").length,
+    });
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12000);
 
   try {
     const res = await fetch(`${WORKER_BASE}/api/consult`, {
       method: "POST",
+      mode: "cors",
       headers: {
         "Content-Type": "application/json",
         "X-Tenant-Id": TENANT_ID,
@@ -52,7 +77,6 @@ export async function consultAI(prompt: string): Promise<ConsultResult> {
       signal: controller.signal,
     });
 
-    // Try JSON first, fallback to text
     const contentType = res.headers.get("content-type") || "";
     let data: any = null;
 
@@ -60,14 +84,21 @@ export async function consultAI(prompt: string): Promise<ConsultResult> {
       data = await res.json().catch(() => ({}));
     } else {
       const text = await res.text().catch(() => "");
-      // if worker returned plain text, wrap it
       data = { reply: text };
+    }
+
+    if (DEBUG) {
+      console.log("[consultAI] response <-", {
+        ok: res.ok,
+        status: res.status,
+        contentType,
+        hasReply: !!String(data?.reply || "").trim(),
+      });
     }
 
     const reply = String(data?.reply || "").trim();
     if (reply) return { ok: true, reply };
 
-    // Worker ok but no reply
     if (res.ok) {
       return {
         ok: false,
@@ -77,7 +108,6 @@ export async function consultAI(prompt: string): Promise<ConsultResult> {
       };
     }
 
-    // Worker returned error
     return {
       ok: false,
       level: "soft",
@@ -88,6 +118,7 @@ export async function consultAI(prompt: string): Promise<ConsultResult> {
     };
   } catch (err: any) {
     const isAbort = err?.name === "AbortError";
+    if (DEBUG) console.warn("[consultAI] fetch error:", err);
     return {
       ok: false,
       level: "hard",
