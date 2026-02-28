@@ -6,74 +6,58 @@ export type ConsultResult =
   | { ok: false; level: "hard"; message: string; details?: any };
 
 const env = (import.meta as any).env || {};
-
-const WORKER_BASE_RAW: string = env.VITE_WORKER_URL || "";
-const TENANT_ID: string = env.VITE_TENANT_ID || "";
-const TENANT_KEY: string = env.VITE_TENANT_KEY || "";
-
-// Optional debug flag (set VITE_DEBUG=1 in Pages variables if needed)
 const DEBUG: boolean = String(env.VITE_DEBUG || "") === "1";
 
-// normalize: remove trailing slash
-let WORKER_BASE = WORKER_BASE_RAW.replace(/\/+$/, "").trim();
+/**
+ * tenant_id:
+ * - 建議：用 URL query ?t=xxxx（embed/客戶網站最好）
+ * - 備用：用 VITE_TENANT_ID（你自己站 demo 可以）
+ */
+function getTenantId(): string {
+  try {
+    const url = new URL(window.location.href);
+    const fromQuery = url.searchParams.get("t") || url.searchParams.get("tenant");
+    if (fromQuery) return String(fromQuery).trim();
+  } catch {}
 
-// ensure scheme
-if (WORKER_BASE && !/^https?:\/\//i.test(WORKER_BASE)) {
-  WORKER_BASE = `https://${WORKER_BASE}`;
+  const fromEnv = String(env.VITE_TENANT_ID || "").trim();
+  return fromEnv;
 }
 
-function missingVars() {
-  const missing: string[] = [];
-  if (!WORKER_BASE) missing.push("VITE_WORKER_URL");
-  if (!TENANT_ID) missing.push("VITE_TENANT_ID");
-  if (!TENANT_KEY) missing.push("VITE_TENANT_KEY");
-  return missing;
+function safeJsonParse(text: string) {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 export async function consultAI(prompt: string): Promise<ConsultResult> {
-  const missing = missingVars();
-  if (missing.length) {
-    if (DEBUG) {
-      console.log("[consultAI] missing vars:", missing, {
-        hasWorkerUrl: !!WORKER_BASE,
-        hasTenantId: !!TENANT_ID,
-        hasTenantKey: !!TENANT_KEY,
-      });
-    }
+  const tenant_id = getTenantId();
+  if (!tenant_id) {
     return {
       ok: false,
       level: "hard",
-      message: `Missing ${missing.join(", ")}`,
-      details: {
-        hasWorkerUrl: !!WORKER_BASE,
-        hasTenantId: !!TENANT_ID,
-        hasTenantKey: !!TENANT_KEY,
-      },
+      message: "Missing tenant_id (use ?t=TENANT_ID or set VITE_TENANT_ID)",
     };
-  }
-
-  if (DEBUG) {
-    console.log("[consultAI] request ->", {
-      url: `${WORKER_BASE}/api/consult`,
-      hasTenantId: !!TENANT_ID,
-      hasTenantKey: !!TENANT_KEY, // do NOT print key
-      promptLen: String(prompt || "").length,
-    });
   }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12000);
 
   try {
-    const res = await fetch(`${WORKER_BASE}/api/consult`, {
+    if (DEBUG) {
+      console.log("[consultAI] request ->", {
+        url: "/api/consult",
+        tenant_id,
+        promptLen: String(prompt || "").length,
+      });
+    }
+
+    const res = await fetch("/api/consult", {
       method: "POST",
-      mode: "cors",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Tenant-Id": TENANT_ID,
-        "X-Tenant-Key": TENANT_KEY,
-      },
-      body: JSON.stringify({ prompt }),
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ tenant_id, prompt }),
       signal: controller.signal,
     });
 
@@ -84,7 +68,7 @@ export async function consultAI(prompt: string): Promise<ConsultResult> {
       data = await res.json().catch(() => ({}));
     } else {
       const text = await res.text().catch(() => "");
-      data = { reply: text };
+      data = safeJsonParse(text) || { reply: text };
     }
 
     if (DEBUG) {
@@ -93,12 +77,15 @@ export async function consultAI(prompt: string): Promise<ConsultResult> {
         status: res.status,
         contentType,
         hasReply: !!String(data?.reply || "").trim(),
+        hasError: !!String(data?.error || "").trim(),
       });
     }
 
+    // ✅ Success path
     const reply = String(data?.reply || "").trim();
     if (reply) return { ok: true, reply };
 
+    // ✅ Soft errors (worker ok but empty / or returned error text)
     if (res.ok) {
       return {
         ok: false,
