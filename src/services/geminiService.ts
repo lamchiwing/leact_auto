@@ -6,86 +6,32 @@ export type ConsultResult =
   | { ok: false; level: "hard"; message: string; details?: any };
 
 const env = (import.meta as any).env || {};
-const DEBUG: boolean = String(env.VITE_DEBUG || "") === "1";
-
-/**
- * tenant_id:
- * - 建議：用 URL query ?t=xxxx（embed/客戶網站最好）
- * - 備用：用 VITE_TENANT_ID（你自己站 demo 可以）
- */
-function getTenantId(): string {
-  try {
-    const url = new URL(window.location.href);
-    const fromQuery = url.searchParams.get("t") || url.searchParams.get("tenant");
-    if (fromQuery) return String(fromQuery).trim();
-  } catch {}
-
-  const fromEnv = String(env.VITE_TENANT_ID || "").trim();
-  return fromEnv;
-}
-
-function safeJsonParse(text: string) {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return null;
-  }
-}
+const DEBUG = String(env.VITE_DEBUG || "") === "1";
 
 export async function consultAI(prompt: string): Promise<ConsultResult> {
-  const tenant_id = getTenantId();
-  if (!tenant_id) {
-    return {
-      ok: false,
-      level: "hard",
-      message: "Missing tenant_id (use ?t=TENANT_ID or set VITE_TENANT_ID)",
-    };
-  }
-
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12000);
 
   try {
-    if (DEBUG) {
-      console.log("[consultAI] request ->", {
-        url: "/api/consult",
-        tenant_id,
-        promptLen: String(prompt || "").length,
-      });
-    }
+    if (DEBUG) console.log("[consultAI] POST /api/consult", { promptLen: prompt.length });
 
-    const res = await fetch("/api/consult", {
+    const res = await fetch(`/api/consult`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ tenant_id, prompt }),
+      body: JSON.stringify({ prompt }),
       signal: controller.signal,
     });
 
     const contentType = res.headers.get("content-type") || "";
-    let data: any = null;
+    const data =
+      contentType.includes("application/json")
+        ? await res.json().catch(() => ({}))
+        : { reply: await res.text().catch(() => "") };
 
-    if (contentType.includes("application/json")) {
-      data = await res.json().catch(() => ({}));
-    } else {
-      const text = await res.text().catch(() => "");
-      data = safeJsonParse(text) || { reply: text };
-    }
-
-    if (DEBUG) {
-      console.log("[consultAI] response <-", {
-        ok: res.ok,
-        status: res.status,
-        contentType,
-        hasReply: !!String(data?.reply || "").trim(),
-        hasError: !!String(data?.error || "").trim(),
-      });
-    }
-
-    // ✅ Success path
     const reply = String(data?.reply || "").trim();
     if (reply) return { ok: true, reply };
 
-    // ✅ Soft errors (worker ok but empty / or returned error text)
+    // res ok but empty
     if (res.ok) {
       return {
         ok: false,
@@ -95,17 +41,15 @@ export async function consultAI(prompt: string): Promise<ConsultResult> {
       };
     }
 
+    // error from proxy
     return {
       ok: false,
       level: "soft",
-      message:
-        String(data?.error || "").trim() ||
-        `系統暫時未能處理你嘅問題（HTTP ${res.status}），可以再試一次嗎？`,
+      message: String(data?.error || "").trim() || `系統暫時未能處理（HTTP ${res.status}）`,
       details: data,
     };
   } catch (err: any) {
     const isAbort = err?.name === "AbortError";
-    if (DEBUG) console.warn("[consultAI] fetch error:", err);
     return {
       ok: false,
       level: "hard",
