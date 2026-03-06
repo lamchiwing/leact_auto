@@ -1,0 +1,26 @@
+
+# build output
+dist/
+
+# dependencies
+node_modules/
+
+# Vite cache
+node_modules/.vite/
+.vite/
+
+# misc
+.DS_Store
+
+# build output
+dist/
+
+# dependencies
+node_modules/
+
+# Vite cache
+node_modules/.vite/
+.vite/
+
+# misc
+.DS_Store
