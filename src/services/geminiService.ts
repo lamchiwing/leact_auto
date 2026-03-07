@@ -8,44 +8,63 @@ export type ConsultResult =
 const env = (import.meta as any).env || {};
 const DEBUG = String(env.VITE_DEBUG || "") === "1";
 
+function getTenantId(): string {
+  try {
+    const url = new URL(window.location.href);
+    const fromQuery = url.searchParams.get("t") || url.searchParams.get("tenant");
+    if (fromQuery) return String(fromQuery).trim();
+  } catch {}
+
+  const fromEnv = String(env.VITE_TENANT_ID || "").trim();
+  return fromEnv;
+}
+
 export async function consultAI(prompt: string): Promise<ConsultResult> {
+  const tenant_id = getTenantId();
+
+  if (!tenant_id) {
+    return {
+      ok: false,
+      level: "hard",
+      message: "Missing tenant_id",
+      details: "Use ?t=ppaycrejia or set VITE_TENANT_ID",
+    };
+  }
+
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12000);
 
   try {
-    if (DEBUG) console.log("[consultAI] POST /api/consult", { promptLen: prompt.length });
+    if (DEBUG) {
+      console.log("[consultAI] request", { tenant_id, promptLen: prompt.length });
+    }
 
-    const res = await fetch(`/api/consult`, {
+    const res = await fetch("/api/consult", {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt }),
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ tenant_id, prompt }),
       signal: controller.signal,
     });
 
-    const contentType = res.headers.get("content-type") || "";
-    const data =
-      contentType.includes("application/json")
-        ? await res.json().catch(() => ({}))
-        : { reply: await res.text().catch(() => "") };
+    const data = await res.json().catch(() => ({}));
 
-    const reply = String(data?.reply || "").trim();
-    if (reply) return { ok: true, reply };
-
-    // res ok but empty
-    if (res.ok) {
-      return {
-        ok: false,
-        level: "soft",
-        message: "我未完全理解你嘅問題，可以再講清楚少少嗎？",
-        details: data,
-      };
+    if (DEBUG) {
+      console.log("[consultAI] response", data);
     }
 
-    // error from proxy
+    const reply = String(data?.reply || "").trim();
+    if (reply) {
+      return { ok: true, reply };
+    }
+
     return {
       ok: false,
       level: "soft",
-      message: String(data?.error || "").trim() || `系統暫時未能處理（HTTP ${res.status}）`,
+      message:
+        String(data?.error || "").trim() ||
+        "我未完全理解你嘅問題，可以再講清楚少少嗎？",
       details: data,
     };
   } catch (err: any) {
