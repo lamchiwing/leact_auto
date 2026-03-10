@@ -48,7 +48,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }: CFContext)
     const tenant = await env.TENANTS.get<TenantRecord>(tenantId, "json");
 
     if (!tenant) {
-      return json({ ok: false, error: "Invalid tenant" }, 403);
+      return json({ ok: false, error: "Invalid tenant", debug: { tenantId } }, 403);
     }
 
     if (!tenant.key) {
@@ -56,7 +56,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }: CFContext)
         {
           ok: false,
           error: "Tenant key missing in KV",
-          details: { tenantId, tenant },
+          debug: { tenantId, tenant },
         },
         500
       );
@@ -71,31 +71,53 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }: CFContext)
       return json({ ok: false, error: "Missing WORKER_URL" }, 500);
     }
 
-    const res = await fetch(`${workerUrl}/api/consult`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Tenant-Id": tenantId,
-        "X-Tenant-Key": tenant.key,
-      },
-      body: JSON.stringify({ prompt }),
-      signal: controller.signal,
-    });
+    let res: Response;
+    try {
+      res = await fetch(`${workerUrl}/api/consult?debug=1`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Tenant-Id": tenantId,
+          "X-Tenant-Key": tenant.key,
+        },
+        body: JSON.stringify({ prompt }),
+        signal: controller.signal,
+      });
+    } catch (fetchErr: any) {
+      return json(
+        {
+          ok: false,
+          error: "Worker fetch failed",
+          debug: {
+            workerUrl,
+            tenantId,
+            details: String(fetchErr?.message || fetchErr),
+          },
+        },
+        502
+      );
+    }
 
     const contentType = res.headers.get("content-type") || "";
-    let data: any = null;
+    const rawText = await res.text().catch(() => "");
 
+    let data: any = null;
     if (contentType.includes("application/json")) {
-      data = await res.json().catch(() => ({}));
+      try {
+        data = JSON.parse(rawText || "{}");
+      } catch {
+        data = { raw: rawText };
+      }
     } else {
-      const text = await res.text().catch(() => "");
-      data = { raw: text };
+      data = { raw: rawText };
     }
 
     return json(
       {
         ok: res.ok,
         status: res.status,
+        workerUrl,
+        tenantId,
         ...data,
       },
       res.status
