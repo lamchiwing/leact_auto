@@ -46,13 +46,14 @@ export default function AIConsultant() {
       return;
     }
 
-    if (result?.level === "soft") {
-      push({
-        role: "assistant",
-        content:
-          `我未完全理解你嘅意思 🙏\n` +
-          `你可唔可以補充：你想自動化「入線 / 客服 / 內部流程 / 報表」邊一部分？\n\n` +
-          `（或者你都可以直接 WhatsApp 我哋，會快好多）`,
+      if (result?.level === "soft") {
+        push({
+          role: "assistant",
+          content:
+            result?.message ||
+            `我未完全理解你嘅意思 🙏\n` +
+            `你可唔可以補充：你想自動化「入線 / 客服 / 內部流程 / 報表」邊一部分？\n\n` +
+            `（或者你都可以直接 WhatsApp 我哋，會快好多）`,
       });
       setBusy(false);
       return;
