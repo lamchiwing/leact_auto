@@ -1,7 +1,6 @@
 interface Env {
   WORKER_URL: string;
   TENANTS: KVNamespace;
-  USAGE: KVNamespace;
 }
 
 type CFContext = {
@@ -30,6 +29,9 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }: CFContext)
     return json({ ok: false, error: "Method not allowed" }, 405);
   }
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 12000);
+
   try {
     const body = await request.json().catch(() => ({}));
     const prompt = String(body?.prompt || "").trim();
@@ -43,7 +45,6 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }: CFContext)
       return json({ ok: false, error: "Missing prompt" }, 400);
     }
 
-    // 讀 KV：key = tenantId
     const tenant = await env.TENANTS.get<TenantRecord>(tenantId, "json");
 
     if (!tenant) {
@@ -61,7 +62,11 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }: CFContext)
       );
     }
 
-    const workerUrl = String(env.WORKER_URL || "").trim().replace(/\/+$/, "");
+    let workerUrl = String(env.WORKER_URL || "").trim().replace(/\/+$/, "");
+    if (workerUrl && !/^https?:\/\//i.test(workerUrl)) {
+      workerUrl = `https://${workerUrl}`;
+    }
+
     if (!workerUrl) {
       return json({ ok: false, error: "Missing WORKER_URL" }, 500);
     }
@@ -74,6 +79,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }: CFContext)
         "X-Tenant-Key": tenant.key,
       },
       body: JSON.stringify({ prompt }),
+      signal: controller.signal,
     });
 
     const contentType = res.headers.get("content-type") || "";
@@ -95,13 +101,16 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }: CFContext)
       res.status
     );
   } catch (e: any) {
+    const isAbort = e?.name === "AbortError";
     return json(
       {
         ok: false,
-        error: "Proxy error",
+        error: isAbort ? "Proxy timeout (12s)" : "Proxy error",
         details: String(e?.message || e),
       },
       500
     );
+  } finally {
+    clearTimeout(timeout);
   }
 };
